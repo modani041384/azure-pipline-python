@@ -9,7 +9,7 @@ stages:
       displayName: Install Newman Runner
       inputs:
         script: 'sudo npm install -g newman'
-        workingDirectory: $(System.DefaultWorkingDirectory)
+        workingDirectory: 'starter-code/automatedtesting/postman'
     - task: CmdLine@2
       displayName: Run Newman Test
       continueOnError: true
