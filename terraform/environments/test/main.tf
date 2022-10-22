@@ -1,54 +1,140 @@
-provider "azurerm" {
-  tenant_id       = "${var.tenant_id}"
-  subscription_id = "${var.subscription_id}"
-  client_id       = "${var.client_id}"
-  client_secret   = "${var.client_secret}"
-  features {}
-}
 terraform {
-  backend "azurerm" {
-    storage_account_name = ""
-    container_name       = ""
-    key                  = ""
-    access_key           = ""
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+	    version = "3.1.0"
+    }
   }
 }
-module "resource_group" {
-  source               = "../../modules/resource_group"
-  resource_group       = "${var.resource_group}"
-  location             = "${var.location}"
-}
-module "network" {
-  source               = "../../modules/network"
-  address_space        = "${var.address_space}"
-  location             = "${var.location}"
-  virtual_network_name = "${var.virtual_network_name}"
-  application_type     = "${var.application_type}"
-  resource_type        = "NET"
-  resource_group       = "${module.resource_group.resource_group_name}"
-  address_prefix_test  = "${var.address_prefix_test}"
+
+provider "azurerm" {
+  features {}
 }
 
-module "nsg-test" {
-  source           = "../../modules/networksecuritygroup"
-  location         = "${var.location}"
-  application_type = "${var.application_type}"
-  resource_type    = "NSG"
-  resource_group   = "${module.resource_group.resource_group_name}"
-  subnet_id        = "${module.network.subnet_id_test}"
-  address_prefix_test = "${var.address_prefix_test}"
+resource "azurerm_resource_group" "test" {
+  name     = "resources-tf-2022"
+  location = "eastus"
 }
-module "appservice" {
-  source           = "../../modules/appservice"
-  location         = "${var.location}"
-  application_type = "${var.application_type}"
-  resource_type    = "AppService"
-  resource_group   = "${module.resource_group.resource_group_name}"
+
+resource "azurerm_virtual_network" "test" {
+  name                 = "${var.application_type}"
+  address_space       = ["10.0.0.0/16"]
+  location             = "eastus"
+  resource_group_name  = "resources-tf-2022"
 }
-module "publicip" {
-  source           = "../../modules/publicip"
-  location         = "${var.location}"
-  application_type = "${var.application_type}"
-  resource_type    = "publicip"
-  resource_group   = "${module.resource_group.resource_group_name}"
+
+resource "azurerm_subnet" "test" {
+  name                 = "${var.application_type}-sub"
+  resource_group_name  = "resources-tf-2022"
+  virtual_network_name = "${azurerm_virtual_network.test.name}"
+  address_prefixes     = ["10.0.2.0/24"]
+}
+
+resource "azurerm_network_security_group" "nsg" {
+  name                = "${var.application_type}"
+  location             = "eastus"
+  resource_group_name  = "resources-tf-2022"
+
+  security_rule {
+    name                       = "${var.application_type}-5000"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "5000"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  security_rule {
+        name                       = "SSH"
+        priority                   = 1001
+        direction                  = "Inbound"
+        access                     = "Allow"
+        protocol                   = "Tcp"
+        source_port_range          = "*"
+        destination_port_range     = "22"
+        source_address_prefix      = "*"
+        destination_address_prefix = "*"
+    }
+}
+
+resource "azurerm_subnet_network_security_group_association" "test" {
+    subnet_id                 = azurerm_subnet.test.id
+    network_security_group_id = azurerm_network_security_group.nsg.id
+}
+
+resource "azurerm_service_plan" "test" {
+  name                = "${var.application_type}"
+  location             = "eastus"
+  resource_group_name  = "resources-tf-2022"
+  os_type             = "Linux"
+  sku_name            = "F1"
+}
+
+resource "azurerm_linux_web_app" "test" {
+  name                = "${var.application_type}"
+  location             = "eastus"
+  resource_group_name  = "resources-tf-2022"
+  service_plan_id     = azurerm_service_plan.test.id
+
+  app_settings = {
+    "WEBSITE_RUN_FROM_PACKAGE" = 0
+  }
+  site_config {
+    always_on = false
+  }
+}
+
+resource "azurerm_public_ip" "test" {
+  name                = "${var.application_type}-pubip"
+  location            = "eastus"
+  resource_group_name = "resources-tf-2022"
+  allocation_method   = "Dynamic"
+}
+
+# create vm
+resource "azurerm_network_interface" "test" {
+  name                = "network-net"
+  location            = "eastus"
+  resource_group_name = "resources-tf-2022"
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.test.id
+    private_ip_address_allocation = "Dynamic"
+  }
+}
+
+# Create (and display) an SSH key
+resource "tls_private_key" "example_ssh" {
+  algorithm = "RSA"
+  rsa_bits  = 2046
+}
+
+resource "azurerm_linux_virtual_machine" "test" {
+  name                = "myApplicationVM2022"
+  location            = "eastus"
+  resource_group_name = "resources-tf-2022"
+  size                = "Standard_DS2_v2"
+  admin_username      = "adminuser"
+  admin_password      = "P@$$w0rd1234!$"
+  disable_password_authentication = true
+  network_interface_ids = [
+    azurerm_network_interface.test.id,
+  ]
+  admin_ssh_key {
+    username   = "adminuser"
+    public_key = tls_private_key.example_ssh.public_key_openssh
+  }
+  os_disk {
+    caching           = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "UbuntuServer"
+    sku       = "18.04-LTS"
+    version   = "latest"
+  }
 }
