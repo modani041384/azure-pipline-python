@@ -15,6 +15,6 @@ stages:
       continueOnError: true
       inputs:
         script: 'newman run StarterAPIs.json'
-        workingDirectory: '/home/myVm2022'
+        workingDirectory: 'starter-code/automatedtesting/postman'
     
     
